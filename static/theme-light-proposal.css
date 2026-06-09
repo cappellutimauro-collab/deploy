@@ -1,0 +1,258 @@
+/* Optional screenshot-only proposal theme. Enabled with UI_PROPOSAL_THEME=light. */
+:root {
+    --bg: #eef4ef;
+    --surface: #ffffff;
+    --surface-2: #f7faf7;
+    --ink: #183029;
+    --muted: #65756f;
+    --brand: #75c8b0;
+    --brand-dark: #1d5949;
+    --hairline: rgba(32, 70, 57, .14);
+    --soft-shadow: 0 24px 60px rgba(28, 57, 48, .13);
+}
+
+body,
+body.public,
+body.signed-in {
+    background:
+        radial-gradient(circle at 22% 8%, rgba(117, 200, 176, .22), transparent 30%),
+        linear-gradient(180deg, #f8fbf7 0%, #edf4ef 48%, #e8f0ea 100%) !important;
+    color: var(--ink) !important;
+}
+
+body.signed-in main,
+body.public main {
+    color: var(--ink) !important;
+}
+
+.card,
+.hero-panel,
+.app-home-hero,
+.cockpit-hero,
+.profile-box,
+.booking-calendar,
+.booking-day-card,
+.booking-step-surface,
+.slots-hero,
+.profile-admin-hero,
+.pending-panel,
+.task-detail-card,
+.agenda-item,
+.debt-mini-card,
+.patient-card,
+.service-card,
+.scanner-card,
+.table-wrap,
+.auth,
+.modal-panel,
+.drawer-panel,
+.default-capacity-box,
+.slot-management-card-compact,
+.service-picker-description,
+.history-toolbar,
+.empty-state,
+.consent-check,
+.guardian-block,
+.signature-pad-wrap {
+    background: rgba(255, 255, 255, .86) !important;
+    border-color: rgba(32, 70, 57, .14) !important;
+    color: var(--ink) !important;
+    box-shadow: var(--soft-shadow) !important;
+}
+
+.hero-panel,
+.app-home-hero,
+.cockpit-hero {
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, .92), rgba(230, 244, 237, .82)),
+        radial-gradient(circle at 88% 20%, rgba(117, 200, 176, .3), transparent 34%) !important;
+}
+
+h1,
+h2,
+h3,
+strong,
+label,
+.profile-box summary,
+.agenda-main-line,
+.booking-day-card h2,
+.task-card strong,
+.section-heading-row h2,
+.home-session-line span,
+.nav-day strong {
+    color: var(--ink) !important;
+}
+
+.kicker,
+.muted,
+.agenda-meta,
+.profile-box summary span,
+.service-description-text,
+.slot-date-label,
+.booking-day-head .kicker {
+    color: var(--muted) !important;
+}
+
+input,
+select,
+textarea {
+    background: #f6faf6 !important;
+    border-color: rgba(32, 70, 57, .18) !important;
+    color: var(--ink) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .75) !important;
+}
+
+button,
+.button,
+.filter-chip,
+.date-nav-btn,
+.date-filter-button,
+.service-type-tab span,
+.diary-category {
+    background: #ffffff !important;
+    border-color: rgba(32, 70, 57, .18) !important;
+    color: var(--ink) !important;
+    box-shadow: 0 12px 30px rgba(28, 57, 48, .1) !important;
+}
+
+button:hover,
+.button:hover,
+.filter-chip:hover,
+.date-nav-btn:hover {
+    background: #edf8f2 !important;
+    border-color: rgba(29, 89, 73, .28) !important;
+}
+
+button.primary,
+.button.primary,
+.hero-panel .button:first-of-type,
+.cockpit-actions .button:first-child,
+.task-card.is-urgent,
+.slot-button.is-selected,
+.filter-chip.active,
+.service-type-tab.is-selected span {
+    background: linear-gradient(135deg, #bcefdc, #8edbc4) !important;
+    color: #12362d !important;
+    border-color: rgba(29, 89, 73, .22) !important;
+}
+
+.pill,
+.date-tile,
+.nav-day,
+.timeline-time,
+.agenda-time,
+.task-card span,
+.system-notice__icon {
+    background: rgba(117, 200, 176, .18) !important;
+    color: var(--brand-dark) !important;
+    border-color: rgba(29, 89, 73, .18) !important;
+}
+
+body.signed-in nav.app-nav {
+    background: rgba(255, 255, 255, .86) !important;
+    border-color: rgba(32, 70, 57, .14) !important;
+    box-shadow: 0 24px 60px rgba(28, 57, 48, .13) !important;
+    backdrop-filter: blur(18px) saturate(1.15) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(1.15) !important;
+}
+
+body.signed-in nav a.app-nav-link {
+    color: #415a51 !important;
+}
+
+body.signed-in nav a.app-nav-link.active,
+body.signed-in nav a.app-nav-link:hover {
+    background: rgba(117, 200, 176, .2) !important;
+    color: var(--ink) !important;
+}
+
+body.signed-in nav a.app-nav-link .nav-icon,
+.calendar-icon-button,
+.th-calendar {
+    background: rgba(117, 200, 176, .16) !important;
+    color: var(--brand-dark) !important;
+}
+
+table,
+th,
+td {
+    color: var(--ink) !important;
+    border-color: rgba(32, 70, 57, .12) !important;
+}
+
+thead th {
+    background: rgba(236, 246, 240, .9) !important;
+    color: #37564c !important;
+}
+
+.install-app-banner.system-notice,
+.notification-banner.system-notice {
+    background: rgba(255, 255, 255, .92) !important;
+    color: var(--ink) !important;
+    border-color: rgba(32, 70, 57, .14) !important;
+}
+
+.system-notice__text,
+.install-app-banner .system-notice__text,
+.notification-banner .system-notice__text {
+    color: var(--ink) !important;
+}
+
+.system-notice__action,
+.install-app-banner .system-notice__action,
+.notification-banner .system-notice__action {
+    background: #193c33 !important;
+    color: #ffffff !important;
+}
+
+.install-app-banner.system-notice,
+.notification-banner.system-notice,
+.system-notice {
+    display: none !important;
+}
+
+.empty-state,
+.empty-state p,
+.empty-state h2 {
+    color: var(--ink) !important;
+}
+
+.booking-step,
+.booking-date-current,
+.booking-date-nav,
+.booking-nav-actions,
+.booking-step-surface,
+.booking-slot-grid,
+.booking-slot-card {
+    background: rgba(255, 255, 255, .84) !important;
+    border-color: rgba(32, 70, 57, .14) !important;
+    color: var(--ink) !important;
+}
+
+.booking-date-nav {
+    box-shadow: var(--soft-shadow) !important;
+}
+
+.booking-step.active,
+.booking-step:hover {
+    background: linear-gradient(135deg, rgba(188, 239, 220, .88), rgba(255, 255, 255, .9)) !important;
+}
+
+.booking-step span {
+    background: rgba(117, 200, 176, .2) !important;
+    color: var(--brand-dark) !important;
+}
+
+.booking-slot-card strong,
+.booking-slot-card p {
+    color: var(--ink) !important;
+}
+
+.task-card,
+button.task-card,
+.task-card:not(.is-urgent),
+button.task-card:not(.is-urgent) {
+    background: rgba(255, 255, 255, .86) !important;
+    color: var(--ink) !important;
+    border-color: rgba(32, 70, 57, .14) !important;
+}

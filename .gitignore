@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.log
+*.bak*
+
+fisio_app.sqlite3
+fisio_app.sqlite3-*
+fisio_app.repaired.sqlite3
+app_secret.key
+stripe_secret_key.txt
+stripe_webhook_secret.txt
+email_settings.json
+
+email_outbox/
+consensi informati/
+backups/
+build/
+dist/
+reports/
+runtime-data/
+old versions/
+loghi/
+
+.env
+.env.*
+.vercel/

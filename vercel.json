@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "excludeFiles": "{tests/**,docs/**,**/__pycache__/**,*.sqlite3,*.key,*.bat,*.log,*.bak*,email_outbox/**,backups/**,dist/**,build/**,reports/**,runtime-data/**}"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/static/uploads/:path*",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!static/).*)",
+      "destination": "/api/index"
+    }
+  ]
+}
