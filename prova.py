@@ -583,6 +583,10 @@ def init_db() -> None:
     add_column("events", "target_id", "INTEGER")
     add_column("events", "metadata", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_password_resets_token_hash ON password_resets(token_hash)")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_stripe_session_id ON payments(stripe_session_id) "
+        "WHERE stripe_session_id IS NOT NULL AND stripe_session_id != ''"
+    )
 
     user_count = int(conn.execute("SELECT COUNT(*) AS total FROM users").fetchone()["total"] or 0)
     studio = conn.execute("SELECT id FROM studios ORDER BY id LIMIT 1").fetchone()
@@ -1411,16 +1415,17 @@ def record_stripe_checkout_payment(session: Any, expected_user_id: int | None = 
     if expected_user_id is not None and meta_user_id != int(expected_user_id):
         return False, "Pagamento non associato al tuo profilo"
     session_id = stripe_session_value(session, "id", "") or ""
+    if not session_id:
+        return False, "Sessione Stripe non valida"
     amount_total = float(stripe_session_value(session, "amount_total", 0) or 0) / 100
     conn = connect()
     app = conn.execute(
         """
-        SELECT a.id, a.price, a.status, COALESCE(SUM(p.amount), 0) AS paid,
-               COUNT(CASE WHEN p.stripe_session_id = ? THEN 1 END) AS already_saved
+        SELECT a.id, a.price, a.status,
+               COALESCE((SELECT SUM(amount) FROM payments WHERE appointment_id = a.id), 0) AS paid,
+               COALESCE((SELECT COUNT(*) FROM payments WHERE stripe_session_id = ?), 0) AS already_saved
         FROM appointments a
-        LEFT JOIN payments p ON p.appointment_id = a.id
         WHERE a.id = ? AND a.user_id = ?
-        GROUP BY a.id
         """,
         (session_id, app_id, meta_user_id),
     ).fetchone()
@@ -1434,11 +1439,16 @@ def record_stripe_checkout_payment(session: Any, expected_user_id: int | None = 
     residual = max(due - float(app["paid"] or 0), 0)
     amount = min(residual, amount_total) if residual > 0 else amount_total
     if amount > 0:
-        conn.execute(
-            "INSERT INTO payments (appointment_id, paid_at, amount, method, stripe_session_id) VALUES (?, ?, ?, ?, ?)",
-            (app_id, now().isoformat(), amount, "Stripe", session_id),
-        )
-        conn.commit()
+        try:
+            conn.execute(
+                "INSERT INTO payments (appointment_id, paid_at, amount, method, stripe_session_id) VALUES (?, ?, ?, ?, ?)",
+                (app_id, now().isoformat(), amount, "Stripe", session_id),
+            )
+            conn.commit()
+        except db_integrity_error_types():
+            conn.rollback()
+            conn.close()
+            return True, "Pagamento gia registrato"
     conn.close()
     return True, "Pagamento registrato"
 
@@ -3813,6 +3823,13 @@ class App(BaseHTTPRequestHandler):
             return
         ensure_slots()
         user = get_user_from_cookie(self.headers)
+        if parsed.path == "/payment/success":
+            self.payment_success(user, query)
+            return
+        if parsed.path == "/payment/cancel":
+            target = "/profile?flash=Pagamento%20annullato" if user else "/login?flash=Pagamento%20annullato"
+            self.redirect(target)
+            return
         if parsed.path in {"/login", "/register"} and user:
             self.redirect("/")
         elif parsed.path in {"/login", "/register"}:
@@ -3872,10 +3889,6 @@ class App(BaseHTTPRequestHandler):
             self.html(patient_detail_page(user, query, flash))
         elif parsed.path == "/admin":
             self.redirect("/")
-        elif parsed.path == "/payment/success":
-            self.payment_success(user, query)
-        elif parsed.path == "/payment/cancel":
-            self.redirect("/profile?flash=Pagamento%20annullato")
         elif parsed.path == "/ics":
             self.download_ics(user, query)
         else:
@@ -5024,6 +5037,7 @@ class App(BaseHTTPRequestHandler):
         stripe.api_key = stripe_secret_key()
         connect_destination = stripe_connect_destination_account()
         log_event("stripe_checkout_created", f"Checkout Stripe creato per seduta {app_id}", user["id"])
+        stripe_metadata = {"appointment_id": str(app_id), "user_id": str(user["id"])}
         session_payload = {
             "mode": "payment",
             "line_items": [
@@ -5036,15 +5050,18 @@ class App(BaseHTTPRequestHandler):
                     "quantity": 1,
                 }
             ],
-            "metadata": {"appointment_id": str(app_id), "user_id": str(user["id"])},
+            "client_reference_id": str(app_id),
+            "customer_email": user["email"],
+            "locale": "it",
+            "metadata": dict(stripe_metadata),
+            "payment_intent_data": {"metadata": dict(stripe_metadata)},
             "success_url": f"{self.base_url()}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
             "cancel_url": f"{self.base_url()}/payment/cancel",
         }
         if connect_destination:
-            session_payload["payment_intent_data"] = {
-                "transfer_data": {"destination": connect_destination}
-            }
+            session_payload["payment_intent_data"]["transfer_data"] = {"destination": connect_destination}
             session_payload["metadata"]["stripe_destination_account"] = connect_destination
+            session_payload["payment_intent_data"]["metadata"]["stripe_destination_account"] = connect_destination
         try:
             session = stripe.checkout.Session.create(**session_payload)
         except Exception as exc:
@@ -5053,22 +5070,34 @@ class App(BaseHTTPRequestHandler):
             raise ValueError("Checkout Stripe non avviato: URL di pagamento non ricevuto")
         self.redirect(session.url)
 
-    def payment_success(self, user: sqlite3.Row, query: dict[str, list[str]]) -> None:
+    def payment_success(self, user: sqlite3.Row | None, query: dict[str, list[str]]) -> None:
         session_id = query.get("session_id", [""])[0]
         if not session_id:
-            self.redirect("/profile?flash=Pagamento%20non%20verificabile")
+            target = "/profile?flash=Pagamento%20non%20verificabile" if user else "/login?flash=Pagamento%20non%20verificabile"
+            self.redirect(target)
             return
         if not stripe_configured():
-            self.redirect("/profile?flash=Stripe%20non%20configurato")
+            target = "/profile?flash=Stripe%20non%20configurato" if user else "/login?flash=Stripe%20non%20configurato"
+            self.redirect(target)
             return
         stripe.api_key = stripe_secret_key()
-        session = stripe.checkout.Session.retrieve(session_id)
-        ok, message = record_stripe_checkout_payment(session, expected_user_id=int(user["id"]))
-        if not ok:
-            self.redirect(f"/profile?flash={quote(message)}")
+        try:
+            session = stripe.checkout.Session.retrieve(session_id)
+        except Exception:
+            target = "/profile?flash=Pagamento%20non%20verificabile" if user else "/login?flash=Pagamento%20non%20verificabile"
+            self.redirect(target)
             return
-        log_event("stripe_payment_success", message, user["id"])
-        self.redirect("/profile?flash=Pagamento%20registrato")
+        expected_user_id = int(user["id"]) if user else None
+        ok, message = record_stripe_checkout_payment(session, expected_user_id=expected_user_id)
+        if not ok:
+            target = f"/profile?flash={quote(message)}" if user else f"/login?flash={quote(message)}"
+            self.redirect(target)
+            return
+        metadata = stripe_session_value(session, "metadata", {}) or {}
+        logged_user_id = int(user["id"]) if user else int(metadata.get("user_id", "0") or 0) or None
+        log_event("stripe_payment_success", message, logged_user_id)
+        target = "/profile?open=payments&flash=Pagamento%20registrato#payments" if user else "/login?flash=Pagamento%20registrato.%20Accedi%20per%20vedere%20lo%20storico"
+        self.redirect(target)
 
     def stripe_webhook(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
