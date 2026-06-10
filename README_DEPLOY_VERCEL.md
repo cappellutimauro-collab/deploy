@@ -49,6 +49,8 @@ Per ogni studio configura Stripe su Vercel con:
 
 Per Apple Pay/Google Pay puo essere necessaria la verifica dominio in Stripe.
 
+Nota multi-medico: `STRIPE_SECRET_KEY` e `STRIPE_WEBHOOK_SECRET` sono configurazioni tecniche dello studio/deploy. Il destinatario del pagamento e invece per singolo medico: nel profilo medico o nella lista "Medici studio" inserisci l'account Stripe Connect `acct_...` del medico. Se manca, il checkout della seduta viene bloccato.
+
 ## Supabase per singolo studio
 
 Per ogni nuovo studio:
@@ -68,7 +70,7 @@ Vercel Functions hanno filesystem read-only, con solo `/tmp` scrivibile in modo 
 Per una produzione vera servono:
 
 - database esterno persistente, ora gestito tramite Supabase/Postgres;
-- storage esterno dedicato se in futuro vuoi scaricare o conservare i PDF firmati fuori dal DB;
+- storage esterno dedicato se in futuro vuoi scaricare o conservare i PDF firmati fuori dal DB. In locale i consensi vengono salvati nella cartella `consensi informati` dell'app; su Vercel il filesystem non e persistente e viene usato solo `/tmp`;
 - secret management tramite variabili ambiente;
 - webhook Stripe configurato sul dominio pubblico.
 

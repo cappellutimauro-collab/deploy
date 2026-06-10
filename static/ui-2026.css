@@ -3620,6 +3620,24 @@ body > .booking-modal .booking-backdrop {
     display: block;
 }
 
+.staff-doctor-stripe-form {
+    display: grid;
+    grid-template-columns: minmax(150px, 220px) auto;
+    gap: 8px;
+    align-items: center;
+    min-width: min(100%, 340px);
+}
+
+.staff-doctor-stripe-form input {
+    min-width: 0;
+    height: 42px;
+}
+
+.staff-doctor-stripe-form button {
+    height: 42px;
+    white-space: nowrap;
+}
+
 @media (max-width: 720px) {
     .setup-shell {
         width: min(100% - 22px, 560px);
@@ -3657,6 +3675,10 @@ body > .booking-modal .booking-backdrop {
     .staff-doctor-row form {
         grid-column: 1 / -1;
         width: 100%;
+    }
+
+    .staff-doctor-stripe-form {
+        grid-template-columns: 1fr;
     }
 
     .staff-doctor-row button {

@@ -214,6 +214,16 @@ def is_production() -> bool:
     return os.environ.get("APP_ENV", "").strip().lower() in {"prod", "production"}
 
 
+def is_serverless_runtime() -> bool:
+    return bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
+
+def consent_storage_dir() -> Path:
+    if is_serverless_runtime():
+        return Path(tempfile.gettempdir()) / "rehab-consensi-informati"
+    return CONSENT_DIR
+
+
 def protect_secret_file(path: Path) -> None:
     try:
         os.chmod(path, 0o600)
@@ -427,6 +437,7 @@ def init_db() -> None:
             doctor_gender TEXT NOT NULL DEFAULT '',
             doctor_profile_image TEXT NOT NULL DEFAULT '',
             doctor_location TEXT NOT NULL DEFAULT '',
+            doctor_stripe_account TEXT NOT NULL DEFAULT '',
             doctor_onboarded_at TEXT,
             email_verified INTEGER NOT NULL DEFAULT 0,
             phone_verified INTEGER NOT NULL DEFAULT 0,
@@ -561,6 +572,7 @@ def init_db() -> None:
     add_column("users", "doctor_profile_image", "TEXT NOT NULL DEFAULT ''")
     add_column("users", "doctor_location", "TEXT NOT NULL DEFAULT ''")
     add_column("users", "doctor_onboarded_at", "TEXT")
+    add_column("users", "doctor_stripe_account", "TEXT NOT NULL DEFAULT ''")
     add_column("slots", "doctor_id", "INTEGER REFERENCES users(id)")
     add_column("slots", "archived_at", "TEXT")
     add_column("service_types", "description", "TEXT NOT NULL DEFAULT ''")
@@ -1353,6 +1365,19 @@ def stripe_connect_destination_account() -> str:
     return get_setting("stripe_connect_destination_account", "").strip()
 
 
+def doctor_stripe_connect_account(doctor_id: int | str | None) -> str:
+    try:
+        did = int(doctor_id or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not did:
+        return ""
+    conn = connect()
+    row = conn.execute("SELECT doctor_stripe_account FROM users WHERE id = ? AND role IN ('admin', 'doctor')", (did,)).fetchone()
+    conn.close()
+    return (row["doctor_stripe_account"] if row and row_has(row, "doctor_stripe_account") else "").strip()
+
+
 def stripe_webhook_source() -> str:
     if os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip():
         return "env"
@@ -1524,7 +1549,7 @@ def _decode_signature(signature_data: str) -> Image.Image | None:
 
 
 def generate_consent_pdf(user: sqlite3.Row, data: dict[str, str]) -> Path:
-    consent_dir = (Path(tempfile.gettempdir()) / "rehab-consensi-informati") if postgres_enabled() else CONSENT_DIR
+    consent_dir = consent_storage_dir()
     consent_dir.mkdir(parents=True, exist_ok=True)
     file_path = consent_dir / consent_filename(data["first_name"], data["last_name"])
     width, height = 1240, 1754
@@ -3214,8 +3239,6 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
         stripe_mode = "Test" if active_stripe_key.startswith("sk_test_") else ("Live" if active_stripe_key.startswith("sk_live_") else "")
         stripe_source = stripe_source_label(stripe_secret_source())
         stripe_account = get_setting("stripe_account_id", "")
-        stripe_connect_account = stripe_connect_destination_account()
-        stripe_connect_placeholder = "Gia salvato" if stripe_connect_account else "acct_..."
         stripe_placeholder = "Gia salvata" if active_stripe_key else "sk_test_..."
         stripe_webhook_placeholder = "Gia salvato" if stripe_webhook_secret() else "whsec_..."
         stripe_webhook_label = stripe_webhook_preview()
@@ -3228,8 +3251,50 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
             f'<option value="{value}" {"selected" if gender_value == value else ""}>{label}</option>'
             for value, label in [("", "Non specificato"), ("m", "Uomo"), ("f", "Donna")]
         )
+        doctor_stripe_account = user["doctor_stripe_account"] if row_has(user, "doctor_stripe_account") and user["doctor_stripe_account"] else ""
+        doctor_stripe_placeholder = "Gia salvato" if doctor_stripe_account else "acct_..."
+        studio = primary_studio()
+        studio_logo = studio_logo_url()
+        studio_name = studio["name"] if studio and row_has(studio, "name") else studio_display_name(APP_NAME)
+        studio_email = studio["email"] if studio and row_has(studio, "email") else ""
+        studio_phone = studio["phone"] if studio and row_has(studio, "phone") else ""
+        studio_address = studio["address"] if studio and row_has(studio, "address") else ""
+        studio_tax_id = studio["tax_id"] if studio and row_has(studio, "tax_id") else ""
+        studio_settings_html = ""
         owner_doctors_html = ""
         if is_studio_owner(user):
+            studio_settings_html = f"""
+            <details class="profile-box">
+                <summary>Studio <span>Dati e logo</span></summary>
+                <div class="profile-box-body">
+                    <form method="post" action="/admin/studio-settings" class="form-grid compact-form-grid">
+                        <div><label>Nome studio</label><input name="studio_name" value="{html.escape(studio_name)}" required></div>
+                        <div><label>Email studio</label><input name="studio_email" type="email" value="{html.escape(studio_email)}"></div>
+                        <div><label>Telefono studio</label><input name="studio_phone" value="{html.escape(studio_phone)}"></div>
+                        <div><label>Partita IVA / CF studio</label><input name="studio_tax_id" value="{html.escape(studio_tax_id)}"></div>
+                        <div class="full-row"><label>Indirizzo studio</label><input name="studio_address" value="{html.escape(studio_address)}"></div>
+                        <div class="full-row doctor-photo-uploader studio-logo-uploader" data-doctor-photo-uploader>
+                            <label>Logo studio</label>
+                            <div class="doctor-settings-photo-row setup-logo-row">
+                                <div class="doctor-photo-preview has-image doctor-photo-preview-large studio-logo-preview" data-doctor-photo-preview style="--preview-image:url('{html.escape(studio_logo, quote=True)}'); background-image:url('{html.escape(studio_logo, quote=True)}')" aria-label="Anteprima logo studio"></div>
+                                <div class="studio-logo-copy">
+                                    <strong>Anteprima logo</strong>
+                                    <span>Il logo sara usato nella barra dell'app, nella PWA e nelle schermate pubbliche.</span>
+                                    <small data-doctor-photo-file-name>Nessun nuovo logo selezionato</small>
+                                </div>
+                            </div>
+                            <div class="logo-upload-actions">
+                                <label class="button secondary compact-button logo-upload-button" for="studio-logo-settings-file">Carica logo</label>
+                                <button type="button" class="button secondary compact-button logo-upload-clear" data-doctor-photo-clear hidden>Rimuovi selezione</button>
+                            </div>
+                            <input id="studio-logo-settings-file" class="logo-file-input" type="file" accept="image/png,image/jpeg,image/webp" data-doctor-photo-file>
+                            <input type="hidden" name="studio_logo_data" data-doctor-photo-data>
+                        </div>
+                        <button>Salva studio</button>
+                    </form>
+                </div>
+            </details>
+            """
             conn = connect()
             owner_doctors = conn.execute(
                 """
@@ -3245,6 +3310,8 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
                 status = doctor_row["account_status"] if row_has(doctor_row, "account_status") else "active"
                 active = status == "active"
                 self_row = int(doctor_row["id"]) == int(user["id"])
+                doctor_stripe_value = doctor_row["doctor_stripe_account"] if row_has(doctor_row, "doctor_stripe_account") and doctor_row["doctor_stripe_account"] else ""
+                doctor_stripe_ready = bool(doctor_stripe_value)
                 action = ""
                 if active and not self_row:
                     action = f"""
@@ -3253,6 +3320,13 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
                         <button class="danger compact-button">Archivia</button>
                     </form>
                     """
+                stripe_form = f"""
+                <form method="post" action="/admin/doctor-stripe" class="staff-doctor-stripe-form">
+                    <input type="hidden" name="id" value="{doctor_row['id']}">
+                    <input name="doctor_stripe_account" value="{html.escape(doctor_stripe_value)}" placeholder="acct_...">
+                    <button class="compact-button">Salva Stripe</button>
+                </form>
+                """
                 doctor_rows.append(
                     f"""
                     <article class="staff-doctor-row">
@@ -3260,8 +3334,9 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
                         <div>
                             <strong>{html.escape(doctor_display_name(doctor_row))}</strong>
                             <span>{html.escape(doctor_qualification(doctor_row))}</span>
-                            <small>{'Attivo' if active else 'Archiviato'}{' · Tu' if self_row else ''}</small>
+                            <small>{'Attivo' if active else 'Archiviato'}{' · Tu' if self_row else ''} · Stripe {'ok' if doctor_stripe_ready else 'da configurare'}</small>
                         </div>
+                        {stripe_form}
                         {action}
                     </article>
                     """
@@ -3290,15 +3365,12 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
                         {f'<span class="pill">{html.escape(stripe_mode)}</span>' if stripe_mode else ''}
                         {f'<span class="pill">{html.escape(stripe_preview)}</span>' if stripe_preview else ''}
                         {f'<span class="pill">{html.escape(stripe_account)}</span>' if stripe_account else ''}
-                        {f'<span class="pill">Studio {html.escape(stripe_connect_account)}</span>' if stripe_connect_account else ''}
                     </div>
                     <form method="post" action="/admin/stripe-settings" class="compact-form-grid">
                         <label>Chiave privata Stripe</label>
                         <input name="stripe_secret" type="password" placeholder="{html.escape(stripe_placeholder)}" autocomplete="off">
                         <label>Webhook Stripe</label>
                         <input name="stripe_webhook_secret" type="password" placeholder="{html.escape(stripe_webhook_placeholder)}" autocomplete="off">
-                        <label>Account studio destinatario</label>
-                        <input name="stripe_connect_account" placeholder="{html.escape(stripe_connect_placeholder)}" autocomplete="off">
                         <button>Salva Stripe</button>
                     </form>
                 </div>
@@ -3333,6 +3405,7 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
                         <div><label>Titoli di studio</label><input name="doctor_degree" value="{html.escape(user['doctor_degree'] if 'doctor_degree' in user.keys() else '')}"></div>
                         <div><label>Genere</label><select name="doctor_gender">{gender_options}</select></div>
                         <div class="full-row"><label>Sede / studio</label><input name="doctor_location" value="{html.escape(user['doctor_location'] if 'doctor_location' in user.keys() else '')}"></div>
+                        <div class="full-row"><label>Account Stripe medico</label><input name="doctor_stripe_account" value="{html.escape(doctor_stripe_account)}" placeholder="{html.escape(doctor_stripe_placeholder)}" autocomplete="off"></div>
                         <div class="full-row"><label>Bio professionale</label><textarea name="doctor_bio" rows="6" maxlength="1200">{html.escape(user['doctor_bio'] if 'doctor_bio' in user.keys() else '')}</textarea></div>
                         <div class="full-row doctor-photo-uploader" data-doctor-photo-uploader>
                             <label>Immagine profilo</label>
@@ -3353,6 +3426,7 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
                     <a class="button secondary logout-profile-button" href="/logout">Esci</a>
                 </div>
             </details>
+            {studio_settings_html}
             {stripe_settings_html}
             {owner_doctors_html}
         </section>
@@ -3981,6 +4055,9 @@ class App(BaseHTTPRequestHandler):
                 self.sign_consent(user, form)
             elif parsed.path == "/payment/create":
                 self.create_payment_checkout(user, form)
+            elif parsed.path == "/admin/studio-settings":
+                self.require_admin(user)
+                self.admin_studio_settings(form)
             elif parsed.path == "/admin/stripe-settings":
                 self.require_admin(user)
                 self.admin_stripe_settings(form)
@@ -4026,6 +4103,9 @@ class App(BaseHTTPRequestHandler):
             elif parsed.path == "/admin/doctor/archive":
                 self.require_admin(user)
                 self.admin_doctor_archive(form)
+            elif parsed.path == "/admin/doctor-stripe":
+                self.require_admin(user)
+                self.admin_doctor_stripe(form)
             elif parsed.path == "/admin/diary":
                 self.require_admin(user)
                 self.admin_diary(form)
@@ -4158,6 +4238,44 @@ class App(BaseHTTPRequestHandler):
         log_event("studio_setup", f"Studio configurato: {studio_name}", owner_id)
         self.redirect("/", token=make_token(owner_id, remember=True), max_age=30 * 24 * 60 * 60)
 
+    def admin_studio_settings(self, form: dict[str, str]) -> None:
+        actor = get_user_from_cookie(self.headers)
+        if not is_studio_owner(actor):
+            raise ValueError("Solo il proprietario dello studio puo modificare i dati dello studio")
+        studio_name = form.get("studio_name", "").strip()
+        if not studio_name:
+            raise ValueError("Inserisci il nome dello studio")
+        conn = connect()
+        studio = primary_studio(conn)
+        if not studio:
+            conn.close()
+            raise ValueError("Studio non configurato")
+        studio_id = int(studio["id"])
+        logo_url = studio["logo_path"] if row_has(studio, "logo_path") else ""
+        logo_data = form.get("studio_logo_data", "").strip()
+        if logo_data:
+            logo_url = save_studio_logo_image(studio_id, logo_data)
+        conn.execute(
+            """
+            UPDATE studios
+            SET name = ?, email = ?, phone = ?, address = ?, tax_id = ?, logo_path = ?
+            WHERE id = ?
+            """,
+            (
+                studio_name,
+                form.get("studio_email", "").strip(),
+                normalize_phone(form.get("studio_phone", "")),
+                form.get("studio_address", "").strip(),
+                form.get("studio_tax_id", "").strip(),
+                logo_url,
+                studio_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+        log_event("admin_studio_settings", f"Studio aggiornato: {studio_name}", actor["id"] if actor else None)
+        self.flash_redirect("/profile", "Studio aggiornato")
+
     def admin_stripe_settings(self, form: dict[str, str]) -> None:
         actor = get_user_from_cookie(self.headers)
         if not is_studio_owner(actor):
@@ -4166,7 +4284,6 @@ class App(BaseHTTPRequestHandler):
             raise ValueError("Troppi tentativi di configurazione Stripe. Riprova piu tardi")
         key = form.get("stripe_secret", "").strip()
         webhook_secret = form.get("stripe_webhook_secret", "").strip()
-        connect_account = form.get("stripe_connect_account", "").strip()
         changed = []
         if key:
             if stripe_secret_source() == "env":
@@ -4191,11 +4308,6 @@ class App(BaseHTTPRequestHandler):
                 raise ValueError("Webhook Stripe non valido")
             save_stripe_webhook_secret(webhook_secret)
             changed.append("webhook")
-        if connect_account:
-            if not connect_account.startswith("acct_"):
-                raise ValueError("Account studio Stripe non valido")
-            set_setting("stripe_connect_destination_account", connect_account)
-            changed.append("studio")
         if not changed:
             self.flash_redirect("/profile", "Configurazione Stripe gia salvata")
             return
@@ -4555,6 +4667,10 @@ class App(BaseHTTPRequestHandler):
             except ValueError as exc:
                 conn.close()
                 raise ValueError("Anni di esperienza non validi") from exc
+            doctor_stripe_account = form.get("doctor_stripe_account", "").strip()
+            if doctor_stripe_account and not doctor_stripe_account.startswith("acct_"):
+                conn.close()
+                raise ValueError("Account Stripe medico non valido")
             image_sql = ", doctor_profile_image = ?" if doctor_image_update or form.get("remove_doctor_profile_image") == "1" else ""
             params: list[Any] = [
                 form["email"].lower(),
@@ -4565,6 +4681,7 @@ class App(BaseHTTPRequestHandler):
                 form.get("doctor_qualification", "").strip(),
                 form.get("doctor_gender", "").strip(),
                 form.get("doctor_location", "").strip(),
+                doctor_stripe_account,
             ]
             if password:
                 password_sql = ", password_hash = ?"
@@ -4579,7 +4696,7 @@ class App(BaseHTTPRequestHandler):
                 UPDATE users
                 SET email = ?, phone = ?, doctor_bio = ?, doctor_years_experience = ?,
                     doctor_degree = ?, doctor_qualification = ?, doctor_gender = ?,
-                    doctor_location = ?{password_sql}{image_sql}
+                    doctor_location = ?, doctor_stripe_account = ?{password_sql}{image_sql}
                 WHERE id = ?
                 """,
                 tuple(params),
@@ -4916,6 +5033,34 @@ class App(BaseHTTPRequestHandler):
         )
         self.flash_redirect("/profile", "Medico archiviato")
 
+    def admin_doctor_stripe(self, form: dict[str, str]) -> None:
+        owner = get_user_from_cookie(self.headers)
+        if not is_studio_owner(owner):
+            raise ValueError("Solo il proprietario dello studio puo modificare Stripe dei medici")
+        doctor_id = int(form.get("id", "0"))
+        account_id = form.get("doctor_stripe_account", "").strip()
+        if account_id and not account_id.startswith("acct_"):
+            raise ValueError("Account Stripe medico non valido")
+        conn = connect()
+        doctor = conn.execute(
+            "SELECT * FROM users WHERE id = ? AND role IN ('admin', 'doctor')",
+            (doctor_id,),
+        ).fetchone()
+        if not doctor:
+            conn.close()
+            raise ValueError("Medico non trovato")
+        conn.execute("UPDATE users SET doctor_stripe_account = ? WHERE id = ?", (account_id, doctor_id))
+        conn.commit()
+        conn.close()
+        log_event(
+            "admin_doctor_stripe",
+            f"Stripe medico aggiornato: {doctor_display_name(doctor)}",
+            owner["id"],
+            target_type="doctor",
+            target_id=doctor_id,
+        )
+        self.flash_redirect("/profile", "Stripe medico aggiornato")
+
     def sign_consent(self, user: sqlite3.Row, form: dict[str, str]) -> None:
         if user["role"] != "user":
             raise ValueError("Consenso disponibile solo per i pazienti")
@@ -4955,7 +5100,7 @@ class App(BaseHTTPRequestHandler):
         data["guardian_relation"] = guardian_relation
         file_path = generate_consent_pdf(user, data)
         consent_file_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
-        consent_file_value = consent_filename(data["first_name"], data["last_name"]) if postgres_enabled() else str(file_path)
+        consent_file_value = consent_filename(data["first_name"], data["last_name"]) if is_serverless_runtime() else str(file_path)
         conn = connect()
         conn.execute(
             """
@@ -5035,7 +5180,9 @@ class App(BaseHTTPRequestHandler):
         if not stripe_configured():
             raise ValueError("Stripe non configurato: aggiungi STRIPE_SECRET_KEY o stripe_secret_key.txt nella cartella dell'app")
         stripe.api_key = stripe_secret_key()
-        connect_destination = stripe_connect_destination_account()
+        connect_destination = doctor_stripe_connect_account(app["doctor_id"])
+        if not connect_destination:
+            raise ValueError("Account Stripe del medico non configurato")
         log_event("stripe_checkout_created", f"Checkout Stripe creato per seduta {app_id}", user["id"])
         stripe_metadata = {"appointment_id": str(app_id), "user_id": str(user["id"])}
         session_payload = {
