@@ -40,6 +40,13 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from rehab_app.architecture import APP_VERSION, SCHEMA_VERSION
+from rehab_app.db import (
+    connect_postgres,
+    db_error_types,
+    db_integrity_error_types,
+    db_operational_error_types,
+    postgres_enabled,
+)
 
 
 APP_NAME = "Rehab Philosophy"
@@ -354,7 +361,9 @@ def password_needs_rehash(stored: str) -> bool:
         return True
 
 
-def connect() -> sqlite3.Connection:
+def connect() -> Any:
+    if postgres_enabled():
+        return connect_postgres()
     ensure_writable_runtime_paths()
     conn = sqlite3.connect(DB_PATH, timeout=8)
     conn.row_factory = sqlite3.Row
@@ -363,7 +372,7 @@ def connect() -> sqlite3.Connection:
     if not is_production() or not getattr(sys, "frozen", False):
         try:
             conn.execute("PRAGMA journal_mode = WAL")
-        except sqlite3.OperationalError:
+        except db_operational_error_types():
             pass
     return conn
 
@@ -793,7 +802,7 @@ def get_setting(key: str, default: str = "") -> str:
         row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
         conn.close()
         return row["value"] if row else default
-    except sqlite3.Error:
+    except db_error_types():
         return default
 
 
@@ -821,7 +830,7 @@ def studio_logo_url(default: str = STUDIO_PLACEHOLDER_LOGO) -> str:
         studio = primary_studio()
         if studio and "logo_path" in studio.keys() and studio["logo_path"]:
             return studio["logo_path"]
-    except sqlite3.Error:
+    except db_error_types():
         pass
     return default
 
@@ -831,7 +840,7 @@ def studio_display_name(default: str = "Studio") -> str:
         studio = primary_studio()
         if studio and "name" in studio.keys() and studio["name"]:
             return studio["name"]
-    except sqlite3.Error:
+    except db_error_types():
         pass
     return default
 
@@ -844,7 +853,7 @@ def studio_practitioner_label(default: str = "Professionista sanitario") -> str:
         doctor = next((row for row in rows if DOCTOR_PERMISSION in permissions_for(row) and account_is_active(row)), None)
         if doctor:
             return doctor_display_name(doctor)
-    except sqlite3.Error:
+    except db_error_types():
         pass
     return default
 
@@ -1096,6 +1105,8 @@ def save_doctor_profile_image(user_id: int, image_data: str) -> str:
     if len(raw) > 2_500_000:
         raise ValueError("Immagine profilo troppo grande")
     Image.open(io.BytesIO(raw)).verify()
+    if postgres_enabled():
+        return image_data
     DOCTOR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     target = DOCTOR_UPLOAD_DIR / f"doctor_{int(user_id)}.{ext}"
     target.write_bytes(raw)
@@ -1113,6 +1124,8 @@ def save_studio_logo_image(studio_id: int, image_data: str) -> str:
     if len(raw) > 2_500_000:
         raise ValueError("Logo studio troppo grande")
     Image.open(io.BytesIO(raw)).verify()
+    if postgres_enabled():
+        return image_data
     STUDIO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     target = STUDIO_UPLOAD_DIR / f"studio_{int(studio_id)}.{ext}"
     target.write_bytes(raw)
@@ -1501,8 +1514,9 @@ def _decode_signature(signature_data: str) -> Image.Image | None:
 
 
 def generate_consent_pdf(user: sqlite3.Row, data: dict[str, str]) -> Path:
-    CONSENT_DIR.mkdir(parents=True, exist_ok=True)
-    file_path = CONSENT_DIR / consent_filename(data["first_name"], data["last_name"])
+    consent_dir = (Path(tempfile.gettempdir()) / "rehab-consensi-informati") if postgres_enabled() else CONSENT_DIR
+    consent_dir.mkdir(parents=True, exist_ok=True)
+    file_path = consent_dir / consent_filename(data["first_name"], data["last_name"])
     width, height = 1240, 1754
     margin = 96
     pages: list[Image.Image] = []
@@ -4121,7 +4135,7 @@ class App(BaseHTTPRequestHandler):
                 "INSERT INTO app_settings (key, value) VALUES ('studio_setup_complete', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
             )
             conn.commit()
-        except sqlite3.IntegrityError as exc:
+        except db_integrity_error_types() as exc:
             conn.rollback()
             raise ValueError("Email gia registrata") from exc
         finally:
@@ -4365,7 +4379,7 @@ class App(BaseHTTPRequestHandler):
                 image_url = save_doctor_profile_image(user_id, form.get("doctor_profile_image_data", ""))
                 conn.execute("UPDATE users SET doctor_profile_image = ? WHERE id = ?", (image_url, user_id))
             conn.commit()
-        except sqlite3.IntegrityError:
+        except db_integrity_error_types():
             conn.close()
             self.html(login_page("Email gia registrata."))
             return
@@ -4928,6 +4942,7 @@ class App(BaseHTTPRequestHandler):
         data["guardian_relation"] = guardian_relation
         file_path = generate_consent_pdf(user, data)
         consent_file_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        consent_file_value = consent_filename(data["first_name"], data["last_name"]) if postgres_enabled() else str(file_path)
         conn = connect()
         conn.execute(
             """
@@ -4966,7 +4981,7 @@ class App(BaseHTTPRequestHandler):
                 data["signature_data"],
                 now().isoformat(),
                 CONSENT_VERSION,
-                str(file_path),
+                consent_file_value,
                 consent_file_hash,
                 user["id"],
             ),
