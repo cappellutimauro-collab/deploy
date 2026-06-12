@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rehab-studio-static-v26';
+const CACHE_NAME = 'rehab-studio-static-v27';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/design-system.css',
