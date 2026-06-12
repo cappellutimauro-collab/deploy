@@ -37,7 +37,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from rehab_app.architecture import APP_VERSION, SCHEMA_VERSION
@@ -955,6 +955,14 @@ def log_event(
         )
     conn.commit()
     conn.close()
+
+
+def run_noncritical(label: str, fn: Callable[[], Any]) -> None:
+    try:
+        fn()
+    except Exception as exc:
+        print(f"Rehab noncritical error [{label}]: {exc!r}", file=sys.stderr)
+        traceback.print_exc()
 
 
 def update_auto_suggestions() -> None:
@@ -2227,7 +2235,7 @@ def reset_password_page(token: str, flash: str = "") -> bytes:
     return page("Nuova password", body, None, flash)
 
 def home_page(user: sqlite3.Row, flash: str = "", base_url: str = "") -> bytes:
-    update_auto_suggestions()
+    run_noncritical("home:auto_suggestions", update_auto_suggestions)
     conn = connect()
     if is_staff_account(user):
         body = admin_dashboard(user)
@@ -3564,7 +3572,7 @@ def profile_page(user: sqlite3.Row, query: dict[str, list[str]] | None = None, f
     return page("Profilo", body, user, flash)
 
 def admin_dashboard(user: sqlite3.Row) -> str:
-    update_auto_suggestions()
+    run_noncritical("admin:auto_suggestions", update_auto_suggestions)
     conn = connect()
     day = today().isoformat()
     doctor_id = int(user["id"])
@@ -4321,9 +4329,10 @@ class App(BaseHTTPRequestHandler):
             raise ValueError("Email gia registrata") from exc
         finally:
             conn.close()
-        if owner_is_doctor:
-            ensure_slots(today(), days=14, doctor_id=owner_id)
-        log_event("studio_setup", f"Studio configurato: {studio_name}", owner_id)
+        run_noncritical(
+            "setup:event",
+            lambda: log_event("studio_setup", f"Studio configurato: {studio_name}", owner_id),
+        )
         self.redirect("/", token=make_token(owner_id, remember=True), max_age=30 * 24 * 60 * 60)
 
     def admin_studio_settings(self, form: dict[str, str]) -> None:

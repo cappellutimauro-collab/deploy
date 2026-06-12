@@ -41,6 +41,7 @@ def postgres_dsn() -> str:
     parsed = urlsplit(dsn)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     query.setdefault("sslmode", "require")
+    query.setdefault("connect_timeout", "10")
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
 
 
