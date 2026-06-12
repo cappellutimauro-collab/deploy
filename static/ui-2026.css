@@ -4372,6 +4372,34 @@ body.public .auth textarea:focus::placeholder,
     display: none !important;
 }
 
+/* Final placeholder polish: examples must read as light hints, not entered text. */
+input::placeholder,
+textarea::placeholder,
+select::placeholder,
+body.public .auth input::placeholder,
+body.public .auth textarea::placeholder,
+.setup-shell input::placeholder,
+.setup-shell textarea::placeholder,
+.profile-box input::placeholder,
+.profile-box textarea::placeholder {
+    color: #91a29a !important;
+    opacity: 1 !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+}
+
+input:focus::placeholder,
+textarea:focus::placeholder,
+body.public .auth input:focus::placeholder,
+body.public .auth textarea:focus::placeholder,
+.setup-shell input:focus::placeholder,
+.setup-shell textarea:focus::placeholder,
+.profile-box input:focus::placeholder,
+.profile-box textarea:focus::placeholder {
+    color: transparent !important;
+    opacity: 0 !important;
+}
+
 .booking-date-nav {
     display: grid !important;
     grid-template-columns: minmax(260px, .95fr) minmax(300px, 1.15fr) !important;
@@ -4815,4 +4843,32 @@ body.public .auth textarea:focus::placeholder,
 
 .setup-shell .logo-upload-clear[hidden] {
     display: none !important;
+}
+
+/* Final placeholder polish after every legacy override. */
+input::placeholder,
+textarea::placeholder,
+select::placeholder,
+body.public .auth input::placeholder,
+body.public .auth textarea::placeholder,
+.setup-shell input::placeholder,
+.setup-shell textarea::placeholder,
+.profile-box input::placeholder,
+.profile-box textarea::placeholder {
+    color: #91a29a !important;
+    opacity: 1 !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+}
+
+input:focus::placeholder,
+textarea:focus::placeholder,
+body.public .auth input:focus::placeholder,
+body.public .auth textarea:focus::placeholder,
+.setup-shell input:focus::placeholder,
+.setup-shell textarea:focus::placeholder,
+.profile-box input:focus::placeholder,
+.profile-box textarea:focus::placeholder {
+    color: transparent !important;
+    opacity: 0 !important;
 }

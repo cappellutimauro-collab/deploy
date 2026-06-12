@@ -3951,6 +3951,9 @@ class App(BaseHTTPRequestHandler):
         if parsed.path == "/service-worker.js":
             self.serve_static("/static/service-worker.js")
             return
+        if parsed.path == "/favicon.ico":
+            self.serve_static("/static/app-icon.ico")
+            return
         if parsed.path == "/robots.txt":
             self.text_response("User-agent: *\nDisallow: /\n", "text/plain; charset=utf-8")
             return
