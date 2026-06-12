@@ -17,6 +17,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import traceback
 import webbrowser
 import qrcode
 import qrcode.image.svg
@@ -83,6 +84,8 @@ APP_SECRET_PATH = APP_DIR / "app_secret.key"
 DOCTOR_UPLOAD_DIR = APP_DIR / "static" / "uploads" / "doctors"
 STUDIO_UPLOAD_DIR = APP_DIR / "static" / "uploads" / "studio"
 STUDIO_PLACEHOLDER_LOGO = "/static/studio-placeholder.svg"
+BOOTSTRAP_LOCK = threading.Lock()
+BOOTSTRAP_DONE = False
 
 
 def load_app_secret() -> bytes:
@@ -895,6 +898,8 @@ def ensure_slots(start: dt.date | None = None, days: int = 14, doctor_id: int | 
     if not doctors:
         fallback = primary_doctor_id(conn)
         doctors = [fallback] if fallback else []
+    capacity = default_slot_capacity()
+    rows: list[tuple[str, str, int, int]] = []
     for did in doctors:
         if not did:
             continue
@@ -903,13 +908,15 @@ def ensure_slots(start: dt.date | None = None, days: int = 14, doctor_id: int | 
             if day.weekday() == 6:
                 continue
             for slot_time in SLOT_TIMES:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO slots (slot_date, slot_time, capacity, blocked, doctor_id)
-                    VALUES (?, ?, ?, 0, ?)
-                    """,
-                    (day.isoformat(), slot_time, default_slot_capacity(), did),
-                )
+                rows.append((day.isoformat(), slot_time, capacity, did))
+    if rows:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO slots (slot_date, slot_time, capacity, blocked, doctor_id)
+            VALUES (?, ?, ?, 0, ?)
+            """,
+            rows,
+        )
     conn.commit()
     conn.close()
 
@@ -3860,11 +3867,78 @@ def backup_database_if_needed() -> None:
         source.close()
 
 
+def bootstrap_app(force: bool = False) -> None:
+    global BOOTSTRAP_DONE
+    if BOOTSTRAP_DONE and not force:
+        return
+    with BOOTSTRAP_LOCK:
+        if BOOTSTRAP_DONE and not force:
+            return
+        init_db()
+        BOOTSTRAP_DONE = True
+
 
 class App(BaseHTTPRequestHandler):
+    def runtime_error(self, exc: BaseException) -> None:
+        print("Rehab runtime error:", repr(exc), file=sys.stderr)
+        traceback.print_exc()
+        title = "Configurazione app da completare"
+        detail = html.escape(type(exc).__name__)
+        body = f"""
+        <!doctype html>
+        <html lang="it">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>{title}</title>
+            <style>
+                body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f7faf6; color: #0b3029; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
+                main {{ width: min(92vw, 620px); padding: 28px; border: 1px solid #dbe8e1; border-radius: 24px; background: #fff; box-shadow: 0 22px 70px rgba(2, 37, 30, .12); }}
+                h1 {{ margin: 0 0 12px; font-size: clamp(28px, 5vw, 42px); line-height: 1.05; }}
+                p {{ margin: 0 0 12px; color: #5f7169; font-size: 16px; line-height: 1.55; }}
+                code {{ display: inline-block; padding: 4px 8px; border-radius: 8px; background: #edf8f2; color: #004f3f; }}
+            </style>
+        </head>
+        <body>
+            <main>
+                <h1>{title}</h1>
+                <p>L'app non riesce a inizializzare il database. Controlla <strong>DATABASE_URL</strong> e <strong>FISIO_SECRET</strong> su Vercel, poi fai redeploy.</p>
+                <p>Errore tecnico: <code>{detail}</code>. Il dettaglio completo e nei log Vercel.</p>
+            </main>
+        </body>
+        </html>
+        """
+        self.text_response(body, "text/html; charset=utf-8", HTTPStatus.SERVICE_UNAVAILABLE)
+
+    def bootstrap_or_error(self) -> bool:
+        try:
+            bootstrap_app()
+            return True
+        except Exception as exc:
+            self.runtime_error(exc)
+            return False
+
+    def healthz(self) -> None:
+        payload: dict[str, Any] = {
+            "ok": True,
+            "database_url": bool(os.environ.get("DATABASE_URL", "").strip()),
+            "fisio_secret": bool(os.environ.get("FISIO_SECRET", "").strip()),
+            "postgres": postgres_enabled(),
+        }
+        try:
+            bootstrap_app()
+        except Exception as exc:
+            print("Rehab healthz failed:", repr(exc), file=sys.stderr)
+            traceback.print_exc()
+            payload.update({"ok": False, "error": type(exc).__name__})
+        self.json_response(payload, HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
+        if parsed.path == "/healthz":
+            self.healthz()
+            return
         if parsed.path == "/__visual_login":
             self.visual_login(query)
             return
@@ -3878,13 +3952,15 @@ class App(BaseHTTPRequestHandler):
             self.text_response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>\n', "application/xml; charset=utf-8")
             return
         if parsed.path == "/manifest.webmanifest":
-            init_db()
+            if not self.bootstrap_or_error():
+                return
             self.manifest_response()
             return
         if parsed.path.startswith("/static/"):
             self.serve_static(parsed.path)
             return
-        init_db()
+        if not self.bootstrap_or_error():
+            return
         flash = query.get("flash", [""])[0]
         if parsed.path == "/setup":
             if not studio_setup_required():
@@ -3895,7 +3971,6 @@ class App(BaseHTTPRequestHandler):
         if studio_setup_required():
             self.redirect("/setup")
             return
-        ensure_slots()
         user = get_user_from_cookie(self.headers)
         if parsed.path == "/payment/success":
             self.payment_success(user, query)
@@ -4014,21 +4089,23 @@ class App(BaseHTTPRequestHandler):
         return parsed.netloc.lower() == host
 
     def do_POST(self) -> None:
-        init_db()
-        ensure_slots()
         parsed = urlparse(self.path)
         if parsed.path == "/stripe/webhook":
+            if not self.bootstrap_or_error():
+                return
             self.stripe_webhook()
+            return
+        if not self.bootstrap_or_error():
             return
         if not self.post_is_same_origin():
             self.error(HTTPStatus.FORBIDDEN, "Richiesta non valida")
             return
-        form = self.form()
-        if not self.csrf_is_valid(form):
-            self.error(HTTPStatus.FORBIDDEN, "Sessione di sicurezza scaduta. Ricarica la pagina e riprova.")
-            return
-        user = get_user_from_cookie(self.headers)
         try:
+            form = self.form()
+            if not self.csrf_is_valid(form):
+                self.error(HTTPStatus.FORBIDDEN, "Sessione di sicurezza scaduta. Ricarica la pagina e riprova.")
+                return
+            user = get_user_from_cookie(self.headers)
             if parsed.path == "/setup":
                 self.setup_studio(form)
             elif studio_setup_required():
@@ -4113,6 +4190,8 @@ class App(BaseHTTPRequestHandler):
                 self.error(HTTPStatus.NOT_FOUND, "Pagina non trovata")
         except ValueError as exc:
             self.flash_redirect(self.headers.get("Referer", "/"), str(exc))
+        except Exception as exc:
+            self.runtime_error(exc)
 
     def form(self) -> dict[str, str]:
         length = int(self.headers.get("Content-Length", 0))

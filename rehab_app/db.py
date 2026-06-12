@@ -97,7 +97,7 @@ class PgConnection:
     def __init__(self, dsn: str):
         if psycopg is None or dict_row is None:
             raise RuntimeError("DATABASE_URL configurato, ma psycopg non e installato")
-        self._conn = psycopg.connect(dsn, row_factory=dict_row)
+        self._conn = psycopg.connect(dsn, row_factory=dict_row, prepare_threshold=None, connect_timeout=10)
 
     def execute(self, sql: str, params: Iterable[Any] | None = None) -> PgResult | StaticResult:
         handled = self._handle_sqlite_compat(sql)
