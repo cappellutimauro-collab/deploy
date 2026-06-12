@@ -377,6 +377,8 @@ def password_needs_rehash(stored: str) -> bool:
 def connect() -> Any:
     if postgres_enabled():
         return connect_postgres()
+    if is_serverless_runtime():
+        raise RuntimeError("DATABASE_URL non configurato nel runtime serverless")
     ensure_writable_runtime_paths()
     conn = sqlite3.connect(DB_PATH, timeout=8)
     conn.row_factory = sqlite3.Row
@@ -3945,6 +3947,8 @@ class App(BaseHTTPRequestHandler):
             "database_url": bool(os.environ.get("DATABASE_URL", "").strip()),
             "fisio_secret": bool(os.environ.get("FISIO_SECRET", "").strip()),
             "postgres": postgres_enabled(),
+            "vercel_env": os.environ.get("VERCEL_ENV", ""),
+            "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "")[:12],
         }
         try:
             bootstrap_app()
@@ -3954,11 +3958,29 @@ class App(BaseHTTPRequestHandler):
             payload.update({"ok": False, "error": type(exc).__name__})
         self.json_response(payload, HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE)
 
+    def versionz(self) -> None:
+        payload = {
+            "app_version": APP_VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "python": sys.version.split()[0],
+            "vercel": bool(os.environ.get("VERCEL")),
+            "vercel_env": os.environ.get("VERCEL_ENV", ""),
+            "vercel_url": os.environ.get("VERCEL_URL", ""),
+            "commit": os.environ.get("VERCEL_GIT_COMMIT_SHA", "")[:12],
+            "database_url": bool(os.environ.get("DATABASE_URL", "").strip()),
+            "fisio_secret": bool(os.environ.get("FISIO_SECRET", "").strip()),
+            "stripe_secret": bool(os.environ.get("STRIPE_SECRET_KEY", "").strip()),
+        }
+        self.json_response(payload, HTTPStatus.OK)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
         if parsed.path == "/healthz":
             self.healthz()
+            return
+        if parsed.path == "/version":
+            self.versionz()
             return
         if parsed.path == "/__visual_login":
             self.visual_login(query)
