@@ -392,6 +392,13 @@ def connect() -> Any:
 
 def init_db() -> None:
     conn = connect()
+    try:
+        schema_row = conn.execute("SELECT value FROM app_settings WHERE key = 'schema_version'").fetchone()
+        if schema_row and schema_row["value"] == SCHEMA_VERSION:
+            conn.close()
+            return
+    except db_error_types():
+        pass
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS studios (
